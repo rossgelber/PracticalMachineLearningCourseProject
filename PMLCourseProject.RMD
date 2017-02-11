@@ -1,0 +1,90 @@
+---
+title: "Practical Machine Learning Course Project"
+author: "Ross Gelber"
+date: "February 10, 2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(data.table)
+library(caret)
+library(ggplot2)
+library(rattle)
+library(rpart)
+library(rpart.plot)
+```
+
+##Loading and Cleaning the Data
+
+There are a number of steps involved here in loading the data and getting it ready for analysis. After reading in the data, we remove columns where a large portion of the data is missing or are NAs. Then we split our traning data further into a traning set and a validation set. Then we look for variables that have either no variance or a very small variance and remove those. Then we remove variables that are unrelated to the modeling such as the individual's name. Finally, we set the classe variable as a factor variable, so we can model that as our outcome.
+
+```{r}
+traindata <- fread("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv")
+testdata <- fread("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv")
+
+nodata <- as.data.table(t(traindata[, lapply(.SD, function(x) sum(is.na(x) | x == "", na.rm = TRUE))]), keep.rownames = TRUE)
+table(nodata$V1)
+
+blankdata <- nodata[V1 != 0, rn]
+traindata <- traindata[, setdiff(names(traindata), blankdata), with = FALSE]
+testdata <- testdata[, setdiff(names(testdata), blankdata), with = FALSE]
+
+traindata <- as.data.frame(traindata)
+testdata <- as.data.frame(testdata)
+traind <- createDataPartition(y = traindata$classe, p = 0.7, list = FALSE)
+train <- traindata[traind,]
+validate <- traindata[-traind,]
+
+var <- nearZeroVar(traindata, saveMetrics = TRUE)
+sum(var$zeroVar)
+sum(var$nzv)
+var <- var[order(-var$freqRatio),]
+head(var)
+
+train <- train[,setdiff(names(train),"new_window")]
+validate <- validate[,setdiff(names(validate), "new_window")]
+testdata <- testdata[,setdiff(names(testdata), "new_window")]
+
+train <- train[, setdiff(names(train), c(grep("time|window", names(train), value = TRUE), "V1", "user_name"))]
+validate <- validate[, setdiff(names(validate), c(grep("time|window", names(validate), value = TRUE), "V1", "user_name"))]
+testdata <- testdata[, setdiff(names(testdata), c(grep("time|window", names(testdata), value = TRUE), "V1", "user_name"))]
+
+train$classe <- as.factor(train$classe)
+validate$classe <- as.factor(validate$classe)
+```
+
+#Modeling
+
+We will start the modeling by creating a tree model to try to classify the data.
+
+```{r}
+tree <- rpart(classe ~ ., data = train, method = "class")
+fancyRpartPlot(tree)
+```
+
+The tree model makes a lot of branches along the way to find the optimal classification. The first split it makes is on the variable rollbelt. This model splits observations where rollbelt >= 130 and rollbelt <130. The observations where rollbelt >=130 almost all fall into class E. After rollbeltm the second split is on the variable pitchforearm. It splits where pitchforearm < -34 and >= -34.
+
+In order to validate this model,  we can use or validate set and measure how accurate this classification model is on that data set.
+
+```{r}
+vTree <- predict(tree, validate, type = "class")
+confusionMatrix(vTree, validate$classe)
+```
+
+From the Confusion Matrix, we see that this model correctly predicited 74% of the observations in the validation set.
+
+The second type of model we are going to try is a Random Forest model
+
+```{r}
+controlRF <- trainControl(method = "cv", 5)
+modelRF <- train(classe ~ ., data = train, method = "rf", trControl = controlRF, ntree = 250)
+modelRF
+
+predictRF <- predict(modelRF, validate)
+confusionMatrix(validate$classe, predictRF)
+```
+
+The Confusion Matrix here tells us that the Random Forest model correctly predicted 99.5% of the value, which is much higher than what we saw with the Tree model. The Random Forest model is clearly the superior model and an extremely acccurate model for this data.
+
+
